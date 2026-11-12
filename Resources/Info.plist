@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>XboxAgentRemote</string>
+    <key>CFBundleIdentifier</key><string>local.weng.XboxAgentRemote</string>
+    <key>CFBundleName</key><string>JoyCode</string>
+    <key>CFBundleDisplayName</key><string>JoyCode</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleShortVersionString</key><string>0.3.12</string>
+    <key>CFBundleVersion</key><string>24</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+    <key>NSSupportsAutomaticTermination</key><false/>
+</dict></plist>

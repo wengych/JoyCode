@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release version and notes
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'Unsupported release tag: %s\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Resources/Info.plist)
+          if [[ "$GITHUB_REF_NAME" != "v$version" || ! "$build" =~ ^[0-9]+$ ]]; then
+            printf 'Tag must match the plist version, with a numeric build number.\n' >&2
+            exit 1
+          fi
+          test -s "docs/releases/$GITHUB_REF_NAME.md"
+      - name: Run tests
+        run: bash test.sh
+      - name: Package application
+        run: bash package-release.sh
+      - name: Publish a new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Resources/Info.plist)
+          archive="dist/JoyCode-$version-build$build-macos-arm64.zip"
+          test -s "$archive"
+          test -s dist/SHA256SUMS
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+
+          # Stop on API failure, or any existing release (including a draft).
+          # Reruns never edit a release or replace its assets.
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+          while IFS= read -r existing_tag; do
+            if [[ "$existing_tag" == "$GITHUB_REF_NAME" ]]; then
+              printf 'Release %s already exists; refusing to overwrite it.\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+          done <<< "$existing_tags"
+
+          release_args=("$GITHUB_REF_NAME" "$archive" dist/SHA256SUMS
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --title "JoyCode $GITHUB_REF_NAME"
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md")
+          if [[ "$version" == 0.* ]]; then
+            release_args+=(--prerelease --latest=false)
+          fi
+          gh release create "${release_args[@]}"
