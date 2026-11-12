@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GameController
+import RemoteCore
 
 enum ControllerAction: Equatable {
     case voice
@@ -18,6 +19,7 @@ final class ControllerService: ObservableObject {
     @Published private(set) var controllerName: String?
     @Published private(set) var isConnected = false
     @Published private(set) var lastInput = "等待 Xbox 手柄"
+    @Published private(set) var battery = ControllerBatterySnapshot.disconnected
 
     var onAction: ((ControllerAction) -> Void)?
     /// Positive values scroll toward older content (up); negative values scroll down.
@@ -45,6 +47,7 @@ final class ControllerService: ObservableObject {
     private var buttons: [ObjectIdentifier: ButtonState] = [:]
     private var connectionGeneration: UInt = 0
     private var scrollTimer: DispatchSourceTimer?
+    private var batteryTimer: DispatchSourceTimer?
     private var rawScrollY = 0.0
     private var scrollIsArmed = false
     private var lastStickDiagnosticAt: TimeInterval = 0
@@ -110,6 +113,7 @@ final class ControllerService: ObservableObject {
     deinit {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         scrollTimer?.cancel()
+        batteryTimer?.cancel()
         // Do not capture self in cleanup: callbacks may outlive the owner briefly.
         let inputs = buttons.values.map(\.input)
         let stick = selectedController?.extendedGamepad?.rightThumbstick
@@ -161,6 +165,7 @@ final class ControllerService: ObservableObject {
         controller.handlerQueue = .main
         controllerName = controller.vendorName ?? controller.productCategory
         isConnected = true
+        startBatteryMonitoring(generation: generation)
 
         bind(gamepad.buttonX, to: .voice, label: "X · 语音", generation: generation)
         bind(gamepad.buttonA, to: .send, label: "A · 发送", generation: generation)
@@ -184,6 +189,44 @@ final class ControllerService: ObservableObject {
         guard let gamepad = controller.extendedGamepad, !controller.isSnapshot else { return false }
         // Do not adopt generic extended gamepads just because they have ABXY buttons.
         return gamepad is GCXboxGamepad || controller.productCategory.lowercased().contains("xbox")
+    }
+
+    private func startBatteryMonitoring(generation: UInt) {
+        batteryTimer?.cancel()
+        refreshBattery()
+        // Battery is a copied snapshot, not a live input or a documented change
+        // notification. Poll gently even while remote actions are paused.
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 30, repeating: .seconds(30), leeway: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.isMonitoring, self.isConnected,
+                  self.connectionGeneration == generation else { return }
+            self.refreshBattery()
+        }
+        batteryTimer = timer
+        timer.resume()
+    }
+
+    private func refreshBattery() {
+        let snapshot: ControllerBatterySnapshot
+        if let controller = selectedController {
+            let reading = controller.battery
+            let powerState: ControllerBatterySnapshot.PowerState
+            switch reading?.batteryState {
+            case .discharging?: powerState = .discharging
+            case .charging?: powerState = .charging
+            case .full?: powerState = .full
+            default: powerState = .unknown
+            }
+            snapshot = ControllerBatterySnapshot(
+                isConnected: true,
+                level: reading.map { Double($0.batteryLevel) },
+                powerState: powerState
+            )
+        } else {
+            snapshot = .disconnected
+        }
+        if snapshot != battery { battery = snapshot }
     }
 
     private func bind(_ input: GCControllerButtonInput, to action: ControllerAction, label: String, generation: UInt) {
@@ -287,12 +330,15 @@ final class ControllerService: ObservableObject {
 
     private func detachController() {
         connectionGeneration &+= 1
+        batteryTimer?.cancel()
+        batteryTimer = nil
         buttons.values.forEach { $0.input.pressedChangedHandler = nil }
         buttons.removeAll()
         selectedController?.extendedGamepad?.rightThumbstick.valueChangedHandler = nil
         selectedController = nil
         controllerName = nil
         isConnected = false
+        if battery != .disconnected { battery = .disconnected }
         stopScrolling()
     }
 

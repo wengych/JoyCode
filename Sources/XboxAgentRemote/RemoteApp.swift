@@ -13,8 +13,12 @@ struct RemoteApp: App {
                 .frame(minWidth: 780, minHeight: 680)
         }
         .defaultSize(width: 900, height: 780)
-        MenuBarExtra("JoyCode", systemImage: "gamecontroller") {
+        MenuBarExtra {
             RemoteMenu(model: coordinator)
+        } label: {
+            Image(nsImage: ControllerBatteryPresentation.menuBarImage(for: coordinator.controller.battery))
+                .accessibilityLabel("JoyCode，手柄电量：\(ControllerBatteryPresentation.text(for: coordinator.controller.battery))")
+                .help("JoyCode · \(ControllerBatteryPresentation.text(for: coordinator.controller.battery))")
         }
     }
 }
@@ -29,6 +33,11 @@ private struct RemoteMenu: View {
     var body: some View {
         Text(model.isRecordingShortcut ? "录制快捷键 · 遥控暂停" : (model.isEnabled ? "遥控已启用 · \(model.voiceLabel)" : "仅诊断手柄输入"))
         Text(model.controller.controllerName ?? "未连接 Xbox 手柄")
+        Label {
+            Text("手柄电量：\(ControllerBatteryPresentation.text(for: model.controller.battery))")
+        } icon: {
+            Image(nsImage: ControllerBatteryPresentation.batteryImage(for: model.controller.battery))
+        }
         Text(model.status)
         Divider()
         Button("显示遥控设置") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
@@ -67,6 +76,17 @@ private struct RemoteView: View {
                 GroupBox("设备与权限") {
                     VStack(alignment: .leading, spacing: 10) {
                         LabeledContent("手柄", value: model.controller.controllerName ?? "未连接 Xbox 手柄")
+                        LabeledContent("手柄电量") {
+                            HStack(spacing: 6) {
+                                Image(nsImage: ControllerBatteryPresentation.batteryImage(for: model.controller.battery))
+                                    .foregroundStyle(model.controller.battery.isLow ? Color.red :
+                                                        (model.controller.battery.powerState == .charging ? Color.green : Color.secondary))
+                                    .accessibilityHidden(true)
+                                Text(ControllerBatteryPresentation.text(for: model.controller.battery))
+                            }
+                        }
+                        Text(ControllerBatteryPresentation.detail(for: model.controller.battery))
+                            .font(.caption).foregroundStyle(.secondary)
                         LabeledContent("最近输入", value: model.controller.lastInput)
                         LabeledContent("辅助功能", value: model.hasAccessibility ? "已授权" : "未授权")
                         HStack {

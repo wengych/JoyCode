@@ -8,9 +8,9 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 ## 当前状态
 
-**0.3.13 Early Preview · build 25**。本版仅修复 macOS CI 所用 SDK 缺少部分 Accessibility Swift 常量名称导致的编译失败，改用已核对的相同协议字符串；不改变功能或 macOS 14 最低要求。本地 198 项自动测试、打包及签名校验通过；远端构建结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
+**0.3.14 Early Preview · build 26**。本版增加菜单栏手柄电量条及菜单／设置中的详细电量，不新增弹窗，也不改变遥控状态机。205 项自动测试、各电量状态的渲染样图检查及安装包构建、签名、SHA-256 校验通过。实机界面仅确认了未连接手柄状态，真实电量及充电上报尚未验收；远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
 
-- **Codex 原生听写在 0.3.12 已实测：**X 开始／X 结束、X 开始／B 取消、LB／RB 切换及再次开始；取消与切换连续两轮通过。这不是 0.3.13 的重新验收。
+- **Codex 原生听写在 0.3.12 已实测：**X 开始／X 结束、X 开始／B 取消、LB／RB 切换及再次开始；取消与切换连续两轮通过。这不是当前版本的重新验收。
 - **Codex 右摇杆滚动异常：**最新实体测试失败，尚未修复。
 - **Codex A 提交尚未确认：**最新组合测试反馈只说明滚动失败，不能视为提交已通过。
 - Claude 的语音、单次提交、方向键和滚动有早期版本成功记录，尚未完成当前版本全键复测。
@@ -32,6 +32,12 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 5. 用 LB／RB 返回目标应用，再用 X 开始和结束听写。先检查生成的草稿，再按 A。
 
 分发包使用本地 **ad-hoc 签名，未经 Apple notarization**，不是 Developer ID 签名的正式发行包。重新构建后可能需要刷新辅助功能授权。
+
+## 手柄电量
+
+菜单栏的 JoyCode 手柄图标旁显示电池填充条；充电时显示闪电，电量不高于 20% 且未充电、也非已充满状态时显示低电量标记。菜单和设置窗口提供详细电量。
+
+电量通过原生 GameController 每 30 秒刷新，暂停遥控后仍会更新。未连接手柄时隐藏电量条；手柄未上报电量或值无效时显示未知，不当作 0%。百分比是系统／手柄上报的估计值，可能不是精确剩余容量。
 
 ## 按键
 
@@ -72,7 +78,7 @@ bash package-release.sh
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.13-build25-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
+打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.14-build26-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
 
 图标源文件为 [Resources/AppIcon-master.png](Resources/AppIcon-master.png)。修改后运行 `bash make-icon.sh` 更新 ICNS；正常构建保留已有图标。
 
