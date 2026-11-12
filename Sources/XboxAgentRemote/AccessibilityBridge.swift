@@ -2256,9 +2256,11 @@ final class AccessibilityBridge {
     private func searchControls(in root: AXUIElement, key: String, limit: Int,
                                 allowUnsupported: Bool = false) throws -> [AXUIElement] {
         let parameters: [String: Any] = [
-            NSAccessibilitySearchIdentifiersKey: [key],
-            NSAccessibilitySearchResultsLimitKey: limit,
-            NSAccessibilitySearchDirectionKey: NSAccessibilitySearchDirectionNext,
+            // Use the existing AX protocol values: SDKs differ in whether their
+            // AppKit Swift imports expose the NSAccessibilitySearch* globals.
+            "AXSearchKey": [key],
+            "AXResultsLimit": limit,
+            "AXDirection": "AXDirectionNext",
             "AXVisibleOnly": true
         ]
         var raw: CFTypeRef?

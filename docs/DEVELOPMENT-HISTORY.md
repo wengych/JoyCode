@@ -2,6 +2,12 @@
 
 本文件保留 JoyCode 早期适配的主要演进、验证证据和未完成项。历史版本的测试数量与实体结果仅属于对应版本，不能替代当前客户端回归；本记录不包含个人路径、原始聊天内容或机器实例标识。
 
+## 0.3.13 · build 25
+
+主分支首次 CI（run #1）在 `macos-15` 上编译失败：该环境的 SDK 未提供源码使用的 `NSAccessibilitySearchIdentifiersKey`、`NSAccessibilitySearchResultsLimitKey`、`NSAccessibilitySearchDirectionKey` 和 `NSAccessibilitySearchDirectionNext` Swift 名称。本机核对这些值分别为 `AXSearchKey`、`AXResultsLimit`、`AXDirection` 和 `AXDirectionNext`。
+
+补丁将字典中的这些引用改为等值协议字符串，保留原参数、行为与 macOS 14 最低要求，不涉及功能修复。本版自动回归与远端 CI 结果待确认。实体验收仍归属 0.3.12；Codex 滚动失败、A 提交未确认的状态不变。
+
 ## 0.3.12 · build 24
 
 本轮集中修复录音生命周期与重复提交风险。

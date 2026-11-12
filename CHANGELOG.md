@@ -1,5 +1,14 @@
 # 更新记录
 
+## 0.3.13 — Early Preview
+
+Build 25。仅修复 SDK 编译兼容性，不改变手柄功能或 macOS 14 最低要求。
+
+- 修复首次 `macos-15` CI 中部分 Accessibility Swift 常量名称不可用的问题；使用已在本机核对的等值 AX 协议字符串，保留原搜索参数和行为。
+- 本版本地 198 项自动测试、打包及签名校验通过；远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
+- 原生 X／X、X／B、LB／RB 及重入的实体验收来自 0.3.12，本版尚未重新验收。
+- **Codex 滚动仍有明确失败记录，A 提交仍未获得实体确认。**鼠标移动、转写阶段手动取消及 ad-hoc／未 notarization 限制不变。
+
 ## 0.3.12 — Early Preview
 
 Build 24。首个预览发布，包含已知的 Codex 滚动问题。
