@@ -20,49 +20,31 @@ enum ControllerBatteryPresentation {
     static func detail(for battery: ControllerBatterySnapshot) -> String {
         guard battery.isConnected else { return "连接 Xbox 手柄后显示电量" }
         guard battery.level != nil else { return "手柄尚未上报可用电量；不会按 0% 显示" }
+        if battery.source == .systemBluetooth {
+            return "电量来自 macOS 蓝牙系统报告，约每 60 秒刷新；不代表充电状态"
+        }
         return "电量为手柄上报的估计值，每 30 秒刷新；暂停遥控时仍更新"
     }
 
-    static func menuBarImage(for battery: ControllerBatterySnapshot) -> NSImage {
-        makeImage(for: battery, includeController: true)
-    }
-
-    static func batteryImage(for battery: ControllerBatterySnapshot) -> NSImage {
-        makeImage(for: battery, includeController: false)
-    }
-
-    private static func makeImage(for battery: ControllerBatterySnapshot,
-                                  includeController: Bool) -> NSImage {
-        let showsGauge = battery.isConnected || !includeController
-        let offset: CGFloat = includeController ? 22 : 0
-        let width: CGFloat = showsGauge ? offset + 34 : 18
-        let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
-            if includeController {
-                symbol("gamecontroller", in: NSRect(x: 0, y: 2, width: 18, height: 14))
-            }
-            guard showsGauge else { return true }
-            NSColor.black.setStroke()
-            NSColor.black.setFill()
-            let outline = NSBezierPath(roundedRect: NSRect(x: offset + 0.5, y: 3.5, width: 22, height: 11),
-                                       xRadius: 2, yRadius: 2)
-            outline.lineWidth = 1
-            outline.stroke()
-            NSBezierPath(roundedRect: NSRect(x: offset + 24, y: 7, width: 2, height: 4),
-                         xRadius: 0.7, yRadius: 0.7).fill()
+    /// Always occupies the original 18-point controller slot. A thin progress
+    /// track lives inside its bottom edge; unknown readings keep the plain icon.
+    static func icon(for battery: ControllerBatterySnapshot) -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
             if battery.isConnected, let level = battery.level {
+                symbol("gamecontroller", in: NSRect(x: 0, y: 5, width: 18, height: 12))
+                let track = NSRect(x: 1, y: 1, width: 16, height: 2)
+                NSColor.black.withAlphaComponent(0.22).setFill()
+                NSBezierPath(roundedRect: track, xRadius: 1, yRadius: 1).fill()
                 if level > 0 {
-                    NSBezierPath(roundedRect: NSRect(x: offset + 2.5, y: 5.5,
-                                                     width: 18 * level, height: 7),
-                                 xRadius: 0.7, yRadius: 0.7).fill()
+                    NSColor.black.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY,
+                                                     width: track.width * level, height: track.height),
+                                 xRadius: 1, yRadius: 1).fill()
                 }
             } else {
-                symbol(battery.isConnected ? "questionmark" : "minus",
-                       in: NSRect(x: offset + 7.5, y: 5, width: 8, height: 8))
-            }
-            if battery.powerState == .charging {
-                symbol("bolt.fill", in: NSRect(x: offset + 28, y: 3, width: 6, height: 12))
-            } else if battery.isLow {
-                symbol("exclamationmark", in: NSRect(x: offset + 29, y: 4, width: 4, height: 10))
+                // No fabricated zero level or question mark on the menu bar.
+                // Connection and reporting status remain available in the menu.
+                symbol("gamecontroller", in: NSRect(x: 0, y: 2, width: 18, height: 14))
             }
             return true
         }

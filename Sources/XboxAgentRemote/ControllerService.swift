@@ -48,6 +48,10 @@ final class ControllerService: ObservableObject {
     private var connectionGeneration: UInt = 0
     private var scrollTimer: DispatchSourceTimer?
     private var batteryTimer: DispatchSourceTimer?
+    private let bluetoothBatteryReader = BluetoothBatteryReader()
+    private var bluetoothBatteryRequestID: UUID?
+    private var bluetoothBatteryLastAttemptAt: TimeInterval?
+    private var bluetoothBatteryCache: (snapshot: ControllerBatterySnapshot, observedAt: TimeInterval)?
     private var rawScrollY = 0.0
     private var scrollIsArmed = false
     private var lastStickDiagnosticAt: TimeInterval = 0
@@ -86,6 +90,7 @@ final class ControllerService: ObservableObject {
             observers = [
                 center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] _ in
                     self?.selectControllerIfNeeded()
+                    self?.refreshBattery()
                 },
                 center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] notification in
                     guard let controller = notification.object as? GCController else { return }
@@ -114,6 +119,7 @@ final class ControllerService: ObservableObject {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         scrollTimer?.cancel()
         batteryTimer?.cancel()
+        bluetoothBatteryReader.cancel()
         // Do not capture self in cleanup: callbacks may outlive the owner briefly.
         let inputs = buttons.values.map(\.input)
         let stick = selectedController?.extendedGamepad?.rightThumbstick
@@ -208,24 +214,100 @@ final class ControllerService: ObservableObject {
     }
 
     private func refreshBattery() {
-        let snapshot: ControllerBatterySnapshot
-        if let controller = selectedController {
-            let reading = controller.battery
-            let powerState: ControllerBatterySnapshot.PowerState
-            switch reading?.batteryState {
-            case .discharging?: powerState = .discharging
-            case .charging?: powerState = .charging
-            case .full?: powerState = .full
-            default: powerState = .unknown
-            }
-            snapshot = ControllerBatterySnapshot(
-                isConnected: true,
-                level: reading.map { Double($0.batteryLevel) },
-                powerState: powerState
-            )
-        } else {
-            snapshot = .disconnected
+        guard let controller = selectedController, isMonitoring else {
+            publishBattery(.disconnected)
+            return
         }
+        let native = nativeBattery(for: controller)
+        if native.level != nil {
+            bluetoothBatteryCache = nil
+            cancelBluetoothBatteryRead()
+            publishBattery(native)
+            return
+        }
+        // A name alone is not an identity. Never borrow one controller's reading
+        // when either the live GC list or the Bluetooth report is ambiguous.
+        guard isUniqueConnectedXbox(controller),
+              let name = controller.vendorName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            bluetoothBatteryCache = nil
+            cancelBluetoothBatteryRead()
+            publishBattery(native)
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if bluetoothBatteryRequestID == nil,
+           bluetoothBatteryLastAttemptAt.map({ now - $0 >= 60 }) ?? true {
+            let requestID = UUID()
+            let generation = connectionGeneration
+            bluetoothBatteryRequestID = requestID
+            let started = bluetoothBatteryReader.read(matchingName: name) { [weak self] level in
+                guard let self, self.bluetoothBatteryRequestID == requestID else { return }
+                self.bluetoothBatteryRequestID = nil
+                guard self.isMonitoring, self.isConnected,
+                      self.connectionGeneration == generation, self.selectedController === controller else { return }
+
+                // Read GC again after the subprocess, so a newly available native
+                // value always wins over a slower Bluetooth result.
+                let currentNative = self.nativeBattery(for: controller)
+                guard currentNative.level == nil else {
+                    self.bluetoothBatteryCache = nil
+                    self.publishBattery(currentNative)
+                    return
+                }
+                guard self.isUniqueConnectedXbox(controller),
+                      controller.vendorName?.trimmingCharacters(in: .whitespacesAndNewlines) == name,
+                      let level else {
+                    self.bluetoothBatteryCache = nil
+                    self.publishBattery(currentNative)
+                    return
+                }
+                let snapshot = ControllerBatterySnapshot(isConnected: true, level: level,
+                                                         powerState: .unknown, source: .systemBluetooth)
+                self.bluetoothBatteryCache = (snapshot, ProcessInfo.processInfo.systemUptime)
+                self.publishBattery(snapshot)
+            }
+            if started {
+                bluetoothBatteryLastAttemptAt = now
+            } else {
+                bluetoothBatteryRequestID = nil
+            }
+        }
+        // A 30-second GC poll must not flash away a still-current fallback. Keep
+        // the previous result during its bounded refresh, then clear it on failure.
+        if let cached = bluetoothBatteryCache,
+           now - cached.observedAt < 60 || bluetoothBatteryRequestID != nil {
+            publishBattery(cached.snapshot)
+        } else {
+            bluetoothBatteryCache = nil
+            publishBattery(native)
+        }
+    }
+
+    private func nativeBattery(for controller: GCController) -> ControllerBatterySnapshot {
+        let reading = controller.battery
+        let powerState: ControllerBatterySnapshot.PowerState
+        switch reading?.batteryState {
+        case .discharging?: powerState = .discharging
+        case .charging?: powerState = .charging
+        case .full?: powerState = .full
+        default: powerState = .unknown
+        }
+        return ControllerBatterySnapshot(isConnected: true, level: reading.map { Double($0.batteryLevel) },
+                                         powerState: powerState)
+    }
+
+    private func isUniqueConnectedXbox(_ controller: GCController) -> Bool {
+        let candidates = GCController.controllers().filter(Self.isXbox)
+        return candidates.count == 1 && candidates.first === controller && selectedController === controller
+    }
+
+    private func cancelBluetoothBatteryRead() {
+        bluetoothBatteryRequestID = nil
+        bluetoothBatteryReader.cancel()
+    }
+
+    private func publishBattery(_ snapshot: ControllerBatterySnapshot) {
         if snapshot != battery { battery = snapshot }
     }
 
@@ -332,6 +414,9 @@ final class ControllerService: ObservableObject {
         connectionGeneration &+= 1
         batteryTimer?.cancel()
         batteryTimer = nil
+        cancelBluetoothBatteryRead()
+        bluetoothBatteryCache = nil
+        bluetoothBatteryLastAttemptAt = nil
         buttons.values.forEach { $0.input.pressedChangedHandler = nil }
         buttons.removeAll()
         selectedController?.extendedGamepad?.rightThumbstick.valueChangedHandler = nil
@@ -343,7 +428,10 @@ final class ControllerService: ObservableObject {
     }
 
     private func controllerDisconnected(_ controller: GCController) {
-        guard selectedController === controller else { return }
+        guard selectedController === controller else {
+            refreshBattery()
+            return
+        }
         detachController()
         lastInput = "Xbox 手柄已断开"
         onDisconnect?()

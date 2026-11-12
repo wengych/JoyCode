@@ -16,7 +16,7 @@ struct RemoteApp: App {
         MenuBarExtra {
             RemoteMenu(model: coordinator)
         } label: {
-            Image(nsImage: ControllerBatteryPresentation.menuBarImage(for: coordinator.controller.battery))
+            Image(nsImage: ControllerBatteryPresentation.icon(for: coordinator.controller.battery))
                 .accessibilityLabel("JoyCode，手柄电量：\(ControllerBatteryPresentation.text(for: coordinator.controller.battery))")
                 .help("JoyCode · \(ControllerBatteryPresentation.text(for: coordinator.controller.battery))")
         }
@@ -36,7 +36,10 @@ private struct RemoteMenu: View {
         Label {
             Text("手柄电量：\(ControllerBatteryPresentation.text(for: model.controller.battery))")
         } icon: {
-            Image(nsImage: ControllerBatteryPresentation.batteryImage(for: model.controller.battery))
+            Image(nsImage: ControllerBatteryPresentation.icon(for: model.controller.battery))
+        }
+        if model.controller.battery.source == .systemBluetooth, model.controller.battery.level != nil {
+            Text("电量来源：macOS 蓝牙报告")
         }
         Text(model.status)
         Divider()
@@ -78,7 +81,7 @@ private struct RemoteView: View {
                         LabeledContent("手柄", value: model.controller.controllerName ?? "未连接 Xbox 手柄")
                         LabeledContent("手柄电量") {
                             HStack(spacing: 6) {
-                                Image(nsImage: ControllerBatteryPresentation.batteryImage(for: model.controller.battery))
+                                Image(nsImage: ControllerBatteryPresentation.icon(for: model.controller.battery))
                                     .foregroundStyle(model.controller.battery.isLow ? Color.red :
                                                         (model.controller.battery.powerState == .charging ? Color.green : Color.secondary))
                                     .accessibilityHidden(true)

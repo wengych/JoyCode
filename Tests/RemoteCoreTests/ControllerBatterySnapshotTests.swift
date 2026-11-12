@@ -56,4 +56,32 @@ final class ControllerBatterySnapshotTests: XCTestCase {
             XCTAssertFalse(snapshot.isLow)
         }
     }
+
+    func testBluetoothZeroIsTrustedButDoesNotInventChargingState() {
+        let native = ControllerBatterySnapshot(isConnected: true, level: 0, powerState: .unknown)
+        let bluetooth = ControllerBatterySnapshot(isConnected: true, level: 0, powerState: .unknown,
+                                                   source: .systemBluetooth)
+        XCTAssertNil(native.level)
+        XCTAssertEqual(bluetooth.percentage, 0)
+        XCTAssertTrue(bluetooth.isLow)
+        XCTAssertEqual(bluetooth.source, .systemBluetooth)
+    }
+
+    func testBluetoothPercentageCannotEstablishFullOrChargingState() {
+        for state in [ControllerBatterySnapshot.PowerState.charging, .full] {
+            let snapshot = ControllerBatterySnapshot(isConnected: true, level: 0.55, powerState: state,
+                                                     source: .systemBluetooth)
+            XCTAssertEqual(snapshot.percentage, 55)
+            XCTAssertEqual(snapshot.powerState, .unknown)
+        }
+        let snapshot = ControllerBatterySnapshot(isConnected: true, level: 1, powerState: .unknown,
+                                                 source: .systemBluetooth)
+        XCTAssertEqual(snapshot.percentage, 100)
+        XCTAssertEqual(snapshot.powerState, .unknown)
+    }
+
+    func testDisconnectClearsBluetoothSourceAsWellAsValue() {
+        XCTAssertEqual(ControllerBatterySnapshot(isConnected: false, level: 0.8, powerState: .unknown,
+                                                 source: .systemBluetooth), .disconnected)
+    }
 }

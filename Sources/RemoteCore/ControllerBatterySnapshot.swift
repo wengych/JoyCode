@@ -1,5 +1,10 @@
 /// A display-safe snapshot; an absent/default reading is not an empty battery.
 public struct ControllerBatterySnapshot: Equatable, Sendable {
+    public enum Source: Equatable, Sendable {
+        case gameController
+        case systemBluetooth
+    }
+
     public enum PowerState: Equatable, Sendable {
         case unknown
         case discharging
@@ -10,23 +15,27 @@ public struct ControllerBatterySnapshot: Equatable, Sendable {
     public let isConnected: Bool
     public let level: Double?
     public let powerState: PowerState
+    public let source: Source
 
     public static let disconnected = ControllerBatterySnapshot(
         isConnected: false, level: nil, powerState: .unknown
     )
 
-    public init(isConnected: Bool, level: Double?, powerState: PowerState) {
+    public init(isConnected: Bool, level: Double?, powerState: PowerState,
+                source: Source = .gameController) {
         self.isConnected = isConnected
-        self.powerState = isConnected ? powerState : .unknown
+        self.source = isConnected ? source : .gameController
+        // Bluetooth's percentage does not establish a charging/full state.
+        self.powerState = isConnected && source == .gameController ? powerState : .unknown
         guard isConnected else {
             self.level = nil
             return
         }
         // GameController defines full as plugged in and 100% charged.
-        if powerState == .full {
+        if self.powerState == .full {
             self.level = 1
         } else if let level, level.isFinite, (0...1).contains(level),
-                  !(powerState == .unknown && level == 0) {
+                  !(source == .gameController && powerState == .unknown && level == 0) {
             self.level = level
         } else {
             // GCDeviceBattery defaults to level 0 with state unknown. Do not

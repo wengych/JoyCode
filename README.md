@@ -8,7 +8,9 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 ## 当前状态
 
-**0.3.14 Early Preview · build 26**。本版增加菜单栏手柄电量条及菜单／设置中的详细电量，不新增弹窗，也不改变遥控状态机。205 项自动测试、各电量状态的渲染样图检查及安装包构建、签名、SHA-256 校验通过。实机界面仅确认了未连接手柄状态，真实电量及充电上报尚未验收；远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
+**0.3.15 Early Preview · build 27**。电量进度改为显示在原手柄图标底部，保持原有宽度；未知或断连时保留原图标，不再显示问号。原生 GameController 未提供有效读数时，使用蓝牙系统报告后备读取。
+
+215 项测试、单图标渲染样图及安装包构建、签名、SHA-256 校验通过，测试覆盖后台读取的单任务、取消和重试。实机已识别 Xbox Wireless Controller，显示“约 100% · 充电状态未知”，来源为 macOS 蓝牙报告；设置页的同一图标组件进度线正常。远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
 
 - **Codex 原生听写在 0.3.12 已实测：**X 开始／X 结束、X 开始／B 取消、LB／RB 切换及再次开始；取消与切换连续两轮通过。这不是当前版本的重新验收。
 - **Codex 右摇杆滚动异常：**最新实体测试失败，尚未修复。
@@ -35,9 +37,11 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 ## 手柄电量
 
-菜单栏的 JoyCode 手柄图标旁显示电池填充条；充电时显示闪电，电量不高于 20% 且未充电、也非已充满状态时显示低电量标记。菜单和设置窗口提供详细电量。
+菜单栏保持单个 18 pt 手柄图标，在同一图标底部以 16 × 2 pt 进度线表示有效电量，不增加第二个电池图标或菜单栏宽度。电量未知或手柄断连时维持原手柄图标，无问号。详细电量、充电状态及低电量提示放在菜单文字和设置窗口；低电量条件仍为不高于 20%、未充电且非已充满状态。
 
-电量通过原生 GameController 每 30 秒刷新，暂停遥控后仍会更新。未连接手柄时隐藏电量条；手柄未上报电量或值无效时显示未知，不当作 0%。百分比是系统／手柄上报的估计值，可能不是精确剩余容量。
+原生 GameController 每 30 秒刷新，有效读数优先；原生读数未知时，每 60 秒在后台读取蓝牙系统报告。仅当 GameController 和蓝牙报告均能唯一匹配已连接的 Xbox 手柄时采用后备读数，失败或有歧义仍显示未知。暂停遥控后也会刷新，菜单会区分读数来源。
+
+未知不会被当作 0%，但蓝牙报告明确提供的有效 0% 可以显示。百分比是系统／手柄上报的估计值；100% 不用于推断正在充电。0.3.15 实机已显示蓝牙来源的约 100%，充电状态仍为未知；没有验收真实充电变化。菜单栏单槽布局经过代码和样图验证，实机界面检查覆盖的是设置页使用的同一图标组件，不是菜单栏截图验收。
 
 ## 按键
 
@@ -78,7 +82,7 @@ bash package-release.sh
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.14-build26-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
+打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.15-build27-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
 
 图标源文件为 [Resources/AppIcon-master.png](Resources/AppIcon-master.png)。修改后运行 `bash make-icon.sh` 更新 ICNS；正常构建保留已有图标。
 
