@@ -8,14 +8,14 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 ## 当前状态
 
-**0.3.15 Early Preview · build 27**。电量进度改为显示在原手柄图标底部，保持原有宽度；未知或断连时保留原图标，不再显示问号。原生 GameController 未提供有效读数时，使用蓝牙系统报告后备读取。
+**0.3.16 Early Preview · build 28**。适配 ChatGPT／Codex 26.1111（内核由 Electron 改为 Chromium）的原生听写，修复转写后焦点离开导致的锁死；新增 Y 回答 Claude 选项卡和 Codex 提问面板的第一项（推荐项）；诊断事件写入 macOS 统一日志。
 
-215 项测试、单图标渲染样图及安装包构建、签名、SHA-256 校验通过，测试覆盖后台读取的单任务、取消和重试。实机已识别 Xbox Wireless Controller，显示“约 100% · 充电状态未知”，来源为 macOS 蓝牙报告；设置页的同一图标组件进度线正常。远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
+232 项测试及安装包构建、签名、SHA-256 校验通过。实机：Codex 主线 X 开始／X 结束／B 取消、Claude X／X／A 发送，以及 Y 回答 Claude 两按钮卡片和 Codex 计划提问均通过。远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
 
-- **Codex 原生听写在 0.3.12 已实测：**X 开始／X 结束、X 开始／B 取消、LB／RB 切换及再次开始；取消与切换连续两轮通过。这不是当前版本的重新验收。
+- **Codex 原生听写已在 26.1111 复测：**X 开始／X 结束、X 开始／B 取消通过；侧边对话不在支持范围。LB／RB 切换的完整轮次验收仍来自 0.3.12。
 - **Codex 右摇杆滚动异常：**最新实体测试失败，尚未修复。
 - **Codex A 提交尚未确认：**最新组合测试反馈只说明滚动失败，不能视为提交已通过。
-- Claude 的语音、单次提交、方向键和滚动有早期版本成功记录，尚未完成当前版本全键复测。
+- Claude 的语音和单次提交本版已复测；方向键和滚动只有早期版本成功记录，尚未完成当前版本全键复测。
 
 详见 [更新记录](CHANGELOG.md) 和 [开发与验证历史](docs/DEVELOPMENT-HISTORY.md)。
 
@@ -83,7 +83,7 @@ bash package-release.sh
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.15-build27-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
+打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.16-build28-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
 
 默认使用 ad-hoc 签名，每次重新构建后系统都会把它当作新应用，辅助功能授权随之失效。本机开发时，可在“钥匙串访问 → 证书助理 → 创建证书”中建一张自签名的“代码签名”证书，并在其信任设置中将“代码签名”设为“始终信任”，然后用它签名；首次授权后，重新构建不再需要重新授权：
 

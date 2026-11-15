@@ -2,13 +2,15 @@
 
 本文件保留 JoyCode 早期适配的主要演进、验证证据和未完成项。历史版本的测试数量与实体结果仅属于对应版本，不能替代当前客户端回归；本记录不包含个人路径、原始聊天内容或机器实例标识。
 
-## 未发布 · ChatGPT／Codex 26.1111 适配
+## 0.3.16 · build 28
 
 ChatGPT／Codex 26.1111.21308 将内核从 Electron 换成 Chromium 157（`Codex Framework`，主类 `BrowserCrApplication`）。录音按钮改名为 `Press and hold to record`，在基础辅助功能模式下只暴露 `AXShowMenu`／`AXScrollToVisible`，没有 `AXPress`；Electron 专有的 `AXManualAccessibility` 返回 -25205（属性不支持）。Chromium 157 的 `chrome_browser_application_mac.mm` 只响应 `AXEnhancedUserInterface`，经 2 秒防抖后启用完整加读屏模式。因此在 Manual 不受支持时破例请求一次 Enhanced：仍不写入 false，且 Manual 可用的客户端（Claude）不受影响。该请求返回 -25208（notImplemented）——Chromium 先处理请求、再交给 NSApplication 的 super——实机观察到 `AXPress` 随后出现，故视为已送达。
 
 实机发现两个锁死来源：侧边对话有焦点时，选择策略“焦点优先”选中了侧边对话输入框；转写结束后客户端把焦点移到别处，完成判定要求焦点而直接标记为不确定。锁定的侧边对话会话标识随后变化，RB 无法恢复原窗口，LB 被拒，只能手动切回再连按两次 B。现改为 Codex 只选主线输入框（侧边对话不在支持范围）；焦点离开时以“已空闲、未可发送”完成；RB／LB 恢复失败时仍激活所属应用并保留锁定。另见 Chromium 的 AX 聚焦写入为异步，聚焦后最多等待 1 秒确认，修复立即校验导致的误报。
 
-实机：Codex 主线 X 开始／X 结束／B 取消通过，Claude X／X 后 A 发送通过；转写期间 A、B 被正确拒绝。侧边对话有焦点时，首次按 X 即将焦点移回主线输入框并开始录音。未复测：重启 ChatGPT 后经 Enhanced 请求首次启用 `AXPress` 的完整路径（仅在旧构建中观察到其生效）、锁定后 RB 激活回退、Codex 滚动与 A 提交。本地 218 项测试通过。
+实机：Codex 主线 X 开始／X 结束／B 取消通过，Claude X／X 后 A 发送通过；转写期间 A、B 被正确拒绝。侧边对话有焦点时，首次按 X 即将焦点移回主线输入框并开始录音。未复测：重启 ChatGPT 后经 Enhanced 请求首次启用 `AXPress` 的完整路径（仅在旧构建中观察到其生效）、锁定后 RB 激活回退、Codex 滚动与 A 提交。
+
+Y 回答选项卡：Claude Code 的“下一步”卡片中 ⌘↩ 字形对辅助功能不可见，主选项以 `aria-keyshortcuts="Meta+Enter"` 识别；Codex 提问面板的选项是 `AXRadioGroup` 中的单选按钮，Y 作答已选中或 Recommended 项。只作答第一项，单次 AXPress、不重试，不提供手柄切换选项（Claude 没有可见的选中状态）。实机：Claude 5.11492.5 两按钮卡片、Codex 计划提问（3 个选项，无提交按钮）均一次作答，卡片随即消失；带提交按钮的面板路径未实机验证。本地 232 项测试通过。
 
 ## 0.3.13 · build 25
 

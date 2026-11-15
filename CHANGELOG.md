@@ -1,18 +1,20 @@
 # 更新记录
 
-## 未发布
+## 0.3.16 — Early Preview
+
+Build 28。适配 ChatGPT／Codex 26.1111 的 Chromium 内核并修复锁死，新增 Y 回答选项卡，诊断写入统一日志。
 
 - 新增 **Y 回答选项卡的第一项**（不提供手柄切换选项：Claude 没有可见的选中状态，选其他项多半需要人工沟通）。Claude Code 的“下一步”卡片实测（Claude 5.11492.5）：⌘↩ 字形对辅助功能不可见，主选项声明 `aria-keyshortcuts="Meta+Enter"`；选项按钮位于只含 1～2 个按钮的 `AXApplicationGroup` 中，外层卡片含说明文字和 Dismiss 图标。Y 用 AXPress 点一次，不重试，不合成 ⌘↩。ChatGPT／Codex 26.1111 的提问面板实测：选项为 `AXRadioGroup` 中的 `AXRadioButton`，Recommended 是选项内单独的文字且已预先选中；Plan 模式的提问面板只有 Dismiss、一个图标按钮和 Skip，没有提交按钮，点选项即作答。Y 作答已选中或推荐的选项；面板若有唯一的 Submit／Continue／Next 则先选再提交（未实机验证）。Codex 选项文字绘制在单选元素之外，命中测试只要求落在同一窗口。实机：手柄 Y 在 Claude 2 个按钮的卡片上点中主选项，在 Codex 3 个选项的计划提问上作答推荐项，卡片和面板随即消失。
 - Y 与 A 共用 1.5 秒提交冷却；同一张卡片回答后保留回执，看到卡片消失才释放。录音／转写期间、输入框有草稿、Agent 运行中（Stop 可见）、审批或应用操作按钮、多选题和自由输入选项均拒绝。
 - 只读选项卡诊断：菜单栏可检查 Claude 选项卡或 Codex 提问面板，结果写入统一日志（category `cardInspector`），只含角色、计数、几何和应用自带的 DOM 标识，不含文字；包含“Y 预演”，运行真实定位逻辑但不点击。开发时也可用 `notifyutil -p local.weng.XboxAgentRemote.inspectCard`（或加 `.codex`）在后台触发。
-
 - 诊断事件和手柄输入同步写入 macOS 统一日志（subsystem `local.weng.XboxAgentRemote`），新增 `logs.sh` 查看；带 HUD 的失败记为 error，并记录启动版本和辅助功能权限变化。不记录草稿、转写或录音内容。
 - 适配 ChatGPT／Codex 26.1111（内核由 Electron 改为 Chromium 157）：录音按钮缺少 `AXPress` 且 `AXManualAccessibility` 不再受支持（AX -25205）时，改为请求 `AXEnhancedUserInterface`；该请求返回 -25208 但实际生效，视为已送达，仍等待 `AXPress` 出现后才录音。
 - ChatGPT 侧边对话（side chat）不在支持范围：Codex 只选择主线输入框，侧边对话即使有焦点也不选；按 X 时先把焦点移回主线输入框。
 - 修复锁死：原生转写完成、文字稳定但焦点已离开输入框时，恢复待命并保留草稿（不标记为可发送），不再进入不确定状态；锁定状态下原目标无法恢复时，RB／LB 仍把所属应用切回前台，锁定保留，连按两次 B 复位。
 - 聚焦输入框后最多等待 1 秒确认焦点生效，修复 Chromium 异步聚焦导致的“输入焦点不在已确认的聊天输入框”误报。
 - `build.sh` 支持 `JOYCODE_SIGN_IDENTITY` 指定签名证书；使用固定证书后，重新构建不再使辅助功能授权失效。默认仍为 ad-hoc。
-- 实机：Codex 主线 X 开始／X 结束／B 取消、Claude X／X／A 发送通过；侧边对话有焦点时首次按 X 即在主线输入框开始录音，转写期间 B 被正确拒绝。本地 218 项测试通过。
+- 实机：Codex 主线 X 开始／X 结束／B 取消、Claude X／X／A 发送通过；侧边对话有焦点时首次按 X 即在主线输入框开始录音，转写期间 B 被正确拒绝。本地 232 项测试及安装包构建、签名、SHA-256 校验通过；远端构建与发布结果见 [Actions](https://github.com/wengych/JoyCode/actions)。
+- 未复测：重启 ChatGPT 后经 Enhanced 请求首次启用 `AXPress` 的完整路径、锁定后 RB 激活回退、提问面板带提交按钮的路径。**Codex 滚动仍有明确失败记录，A 提交仍未获得实体确认。**发布包仍为 ad-hoc 签名、未经 notarization。
 
 ## 0.3.15 — Early Preview
 
