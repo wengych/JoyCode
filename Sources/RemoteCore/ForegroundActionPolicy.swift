@@ -7,6 +7,8 @@ public enum ForegroundAction: String, CaseIterable, Equatable {
     case cancel
     case session
     case scroll
+    /// Answer the foreground agent's choice card (Claude) or request panel (Codex).
+    case reply
 }
 
 public enum ForegroundActionPolicyError: Error, Equatable, LocalizedError {
@@ -64,7 +66,8 @@ public enum ForegroundActionPolicy {
     public static func resolve(action: ForegroundAction, foregroundBundleID: String?,
                                voicePhase: VoicePhase, ownedBundleID: String?) throws -> AgentID {
         if voicePhase != .idle {
-            if action == .send || action == .session { throw RemoteCoreError.targetLocked }
+            // Answering a card sends a message, so it is locked exactly like send.
+            if action == .send || action == .session || action == .reply { throw RemoteCoreError.targetLocked }
             guard let agent = supportedAgent(for: foregroundBundleID),
                   ownedBundleID == foregroundBundleID else {
                 throw ForegroundActionPolicyError.voiceTargetMismatch

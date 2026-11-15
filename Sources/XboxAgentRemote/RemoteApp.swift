@@ -5,16 +5,17 @@ import RemoteCore
 @main
 struct RemoteApp: App {
     @StateObject private var coordinator = Coordinator()
+    @StateObject private var cardInspector = NextStepCardInspector()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         Window("JoyCode", id: "main") {
-            RemoteView(model: coordinator)
+            RemoteView(model: coordinator, cardInspector: cardInspector)
                 .frame(minWidth: 780, minHeight: 680)
         }
         .defaultSize(width: 900, height: 780)
         MenuBarExtra {
-            RemoteMenu(model: coordinator)
+            RemoteMenu(model: coordinator, cardInspector: cardInspector)
         } label: {
             Image(nsImage: ControllerBatteryPresentation.icon(for: coordinator.controller.battery))
                 .accessibilityLabel("JoyCode，手柄电量：\(ControllerBatteryPresentation.text(for: coordinator.controller.battery))")
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct RemoteMenu: View {
     @ObservedObject var model: Coordinator
+    @ObservedObject var cardInspector: NextStepCardInspector
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Text(model.isRecordingShortcut ? "录制快捷键 · 遥控暂停" : (model.isEnabled ? "遥控已启用 · \(model.voiceLabel)" : "仅诊断手柄输入"))
@@ -47,6 +49,13 @@ private struct RemoteMenu: View {
         Button(model.isEnabled ? "停用遥控" : "启用遥控") {
             if model.isEnabled { model.disable() } else { model.enable() }
         }
+        // Menu bar clicks keep Claude frontmost, so the read-only probe can run at once.
+        Button(cardInspector.isRunning ? "正在检查 Claude 选项卡…" : "检查 Claude 选项卡（只读）") {
+            Task { await cardInspector.inspect() }
+        }.disabled(cardInspector.isRunning)
+        Button("检查 ChatGPT / Codex 提问面板（只读）") {
+            Task { await cardInspector.inspect(bundleID: "com.openai.codex") }
+        }.disabled(cardInspector.isRunning)
         Divider()
         Button("退出") { NSApp.terminate(nil) }
     }
@@ -54,6 +63,7 @@ private struct RemoteMenu: View {
 
 private struct RemoteView: View {
     @ObservedObject var model: Coordinator
+    @ObservedObject var cardInspector: NextStepCardInspector
     @State private var newAgent: AgentID = .claude
     @State private var sessionTitle = ""
     @State private var sessionLink = ""
@@ -193,6 +203,7 @@ private struct RemoteView: View {
                         binding("LB", "激活并聚焦 Claude，保留当前会话")
                         binding("RB", "激活 Codex，保留当前窗口的输入焦点")
                         binding("方向键 ↑ ↓", "切换前台 Claude 会话 / ChatGPT / Codex 侧栏项目")
+                        binding("Y", "回答选项卡的第一项：Claude 点主选项，Codex 提交已选或推荐项；其他选项请语音或手动回答")
                         binding("右摇杆 ↑ ↓", "滚动当前 Agent 窗口回复区；切窗即停、松开停止")
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                 }
@@ -204,6 +215,28 @@ private struct RemoteView: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("检查滚动") { model.inspectScroll() }
+                    Button(cardInspector.isRunning ? "等待 Claude…" : "检查选项卡") {
+                        Task { await cardInspector.inspect() }
+                    }.disabled(cardInspector.isRunning)
+                }
+
+                if !cardInspector.lastReport.isEmpty {
+                    GroupBox("Claude 选项卡诊断（只读，不含文字）") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(cardInspector.lastReport)
+                                .font(.caption.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack {
+                                Text("点“检查选项卡”后 6 秒内切到 Claude；也可在 Claude 前台时从菜单栏图标检查。结果同时写入 bash logs.sh。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("复制") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(cardInspector.lastReport, forType: .string)
+                                }
+                            }
+                        }.padding(6)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 10) {

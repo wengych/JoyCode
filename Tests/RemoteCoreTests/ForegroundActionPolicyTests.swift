@@ -39,7 +39,7 @@ final class ForegroundActionPolicyTests: XCTestCase {
         for phase in [VoicePhase.recording, .transcribing, .uncertain] {
             for foreground: String? in [claude, codex, "com.apple.finder", nil] {
                 for owner: String? in [claude, codex, nil] {
-                    for action in [ForegroundAction.send, .session] {
+                    for action in [ForegroundAction.send, .session, .reply] {
                         XCTAssertThrowsError(try ForegroundActionPolicy.resolve(
                             action: action, foregroundBundleID: foreground, voicePhase: phase,
                             ownedBundleID: owner)) {

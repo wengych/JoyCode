@@ -12,6 +12,10 @@ enum ControllerAction: Equatable {
     case activateCodex
     case previousSession
     case nextSession
+    /// Y: answer the foreground agent's choice card / request panel with its first
+    /// (primary / checked / recommended) option. Other options are left to the user:
+    /// choosing them usually means the user wants to talk to the agent instead.
+    case answerChoice
 }
 
 /// Monitors one Xbox without activating a window or synthesizing keyboard input.
@@ -185,6 +189,7 @@ final class ControllerService: ObservableObject {
         bind(gamepad.rightShoulder, to: .activateCodex, label: "RB · Codex", generation: generation)
         bind(gamepad.dpad.up, to: .previousSession, label: "↑ · 上一个会话", generation: generation)
         bind(gamepad.dpad.down, to: .nextSession, label: "↓ · 下一个会话", generation: generation)
+        bind(gamepad.buttonY, to: .answerChoice, label: "Y · 回答选项卡", generation: generation)
 
         // Menu, Home, Share, and their system gestures are deliberately untouched.
         gamepad.rightThumbstick.valueChangedHandler = { [weak self] _, _, y in

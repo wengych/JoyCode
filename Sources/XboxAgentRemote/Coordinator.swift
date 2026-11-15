@@ -45,6 +45,10 @@ final class Coordinator: ObservableObject {
     let controller = ControllerService()
     private let bridge = AccessibilityBridge()
     private let menuNavigator = ClaudeMenuNavigator()
+    private let choiceNavigator = ChoiceCardNavigator()
+    /// One-answer-per-card receipts; they survive operation resets.
+    private var choiceState = ChoiceCardState()
+    private var choiceObservationTask: Task<Void, Never>?
     private let codexMenuNavigator = CodexMenuNavigator()
     private let hud = StatusHUD()
     @Published private(set) var configuration = RemoteConfiguration.defaults
@@ -189,7 +193,7 @@ final class Coordinator: ObservableObject {
         guard !state.isTargetLocked else { report("请先确认语音已停止，再复位状态"); return }
         isEnabled = true
         controller.enabled = true
-        report("遥控已启用 · X 语音 / A 发送 / B 取消")
+        report("遥控已启用 · X 语音 / A 发送 / B 取消 / Y 回答选项卡")
     }
 
     func quitInputConfigAndEnable() async {
@@ -233,6 +237,8 @@ final class Coordinator: ObservableObject {
         transcriptionTask = nil
         submissionObservationTasks.values.forEach { $0.cancel() }
         submissionObservationTasks.removeAll()
+        choiceObservationTask?.cancel()
+        choiceObservationTask = nil
         busyOperations.invalidate()
         isBusy = busyOperations.isBusy
         clearScrollTarget()
@@ -303,6 +309,7 @@ final class Coordinator: ObservableObject {
         case .send: return .send
         case .cancel: return .cancel
         case .previousSession, .nextSession: return .session
+        case .answerChoice: return .reply
         case .selectClaude, .activateCodex: return nil
         }
     }
@@ -363,6 +370,7 @@ final class Coordinator: ObservableObject {
         case .activateCodex: await activateCodex()
         case .previousSession: if let expectedWindow { await stepSession(-1, in: expectedWindow) }
         case .nextSession: if let expectedWindow { await stepSession(1, in: expectedWindow) }
+        case .answerChoice: if let expectedWindow { await answerChoice(in: expectedWindow) }
         }
     }
 
@@ -1151,6 +1159,91 @@ final class Coordinator: ObservableObject {
         if !submissionGuard.hasPending(target: target) {
             submittedHandles.removeValue(forKey: target)
             submissionObservationTasks.removeValue(forKey: target)?.cancel()
+        }
+    }
+
+    /// Read-only. Claude also refuses while its composer holds a draft: a typed or dictated
+    /// draft belongs to A, and answering a card must not silently bypass it.
+    private func locateChoiceCard(in expectedWindow: ForegroundWindowHandle,
+                                  requireEmptyDraft: Bool) throws -> ChoiceCard? {
+        try validateOrdinaryWindow(expectedWindow, action: .reply)
+        switch AgentID.from(bundleID: expectedWindow.bundleID) {
+        case .claude?:
+            let composer = try bridge.locateComposer(bundleID: expectedWindow.bundleID)
+            guard expectedWindow.matches(composer) else { throw RemoteCoreError.targetMismatch }
+            if requireEmptyDraft,
+               !(try bridge.draft(in: composer)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw RemoteError.message("输入框有草稿；用 A 发送，或清空后再按 Y")
+            }
+            return try choiceNavigator.locateClaude(composer: composer.element, window: expectedWindow)
+        case .chatGPT?:
+            return try choiceNavigator.locateCodex(window: expectedWindow)
+        case nil:
+            throw ForegroundActionPolicyError.unsupportedForeground
+        }
+    }
+
+    /// Y: press the card's first option once — Claude's Meta+Enter primary, or Codex's checked /
+    /// recommended option plus its single submit control. Labels are never reported.
+    private func answerChoice(in expectedWindow: ForegroundWindowHandle) async {
+        guard state.voicePhase == .idle else { report("录音或转写尚未完成，Y 未回答，也不会排队", showHUD: true); return }
+        // Shared with A: two submissions from different buttons cannot follow back to back.
+        guard Date().timeIntervalSince(lastSendAttempt) > 1.5 else { report("刚提交过，请先查看 Agent"); return }
+        let generation = operationGeneration
+        let busyLease = beginBusyOperation()
+        defer { endBusyOperation(busyLease) }
+        do {
+            guard let card = try locateChoiceCard(in: expectedWindow, requireEmptyDraft: true) else {
+                report("当前没有可回答的选项卡", showHUD: true)
+                return
+            }
+            guard choiceState.permits(card.key) else {
+                report("这张选项卡已回答，结果尚未确认；未重复点击，请先查看 Agent", showHUD: true)
+                return
+            }
+            // No hidden controller selection: Codex shows its own checked state, so a choice
+            // made there is honored; with neither a checked nor a recommended option, ask.
+            guard let index = card.defaultIndex, card.options.indices.contains(index) else {
+                report("没有默认或推荐选项；请在 Agent 里选好，再按 Y 提交", showHUD: true)
+                return
+            }
+            // Let a just-rendered card settle, then require the very same card again.
+            try await Task.sleep(for: .milliseconds(200))
+            try checkOperation(generation, requireEnabled: true)
+            guard let fresh = try locateChoiceCard(in: expectedWindow, requireEmptyDraft: true),
+                  fresh.key == card.key else { throw ChoiceCardError.changed }
+            try await choiceNavigator.press(fresh, option: index, verify: {
+                try self.validateOrdinaryWindow(expectedWindow, action: .reply)
+            }, beforeCommit: {
+                try self.checkOperation(generation, requireEnabled: true)
+                // Record before AXPress: a timed-out action may still have been delivered.
+                self.choiceState.recordDispatch(fresh.key)
+                self.lastSendAttempt = Date()
+            })
+            recordEvent("选项卡回答 kind=\(fresh.kind)，option=\(index + 1)/\(fresh.options.count)，default=\(fresh.defaultIndex.map { String($0 + 1) } ?? "none")")
+            report("已回答选项卡：第 \(index + 1) 项（共 \(fresh.options.count) 项）")
+            observeChoiceResult(fresh, generation: generation)
+        } catch is CancellationError { }
+        catch {
+            guard generation == operationGeneration else { return }
+            report(error.localizedDescription, showHUD: true)
+        }
+    }
+
+    /// Observe without holding busy or acting again; only a seen disappearance releases the receipt.
+    private func observeChoiceResult(_ card: ChoiceCard, generation: UInt) {
+        choiceObservationTask?.cancel()
+        choiceObservationTask = Task { [weak self] in
+            for _ in 0..<20 {
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                guard let self, generation == self.operationGeneration else { return }
+                if !self.choiceNavigator.isPresent(card) {
+                    self.choiceState.observeAbsent(card.key)
+                    return
+                }
+            }
+            guard let self, generation == self.operationGeneration else { return }
+            self.report("已点击选项，尚未看到选项卡消失；不会重复点击，请查看 Agent")
         }
     }
 
