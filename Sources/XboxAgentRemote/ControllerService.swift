@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GameController
+import os
 import RemoteCore
 
 enum ControllerAction: Equatable {
@@ -18,7 +19,11 @@ enum ControllerAction: Equatable {
 final class ControllerService: ObservableObject {
     @Published private(set) var controllerName: String?
     @Published private(set) var isConnected = false
-    @Published private(set) var lastInput = "等待 Xbox 手柄"
+    /// Every change is mirrored to the unified log, including presses ignored while
+    /// remote control is paused ("（仅诊断）"). Stick updates are already throttled.
+    @Published private(set) var lastInput = "等待 Xbox 手柄" {
+        didSet { Logger.joyController.notice("\(self.lastInput, privacy: .public)") }
+    }
     @Published private(set) var battery = ControllerBatterySnapshot.disconnected
 
     var onAction: ((ControllerAction) -> Void)?

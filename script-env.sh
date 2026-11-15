@@ -17,6 +17,10 @@ DIST_DIR="$(repo_path "${JOYCODE_DIST_DIR:-dist}")"
 APP_DIR="$(repo_path "${JOYCODE_APP_DIR:-$DIST_DIR/JoyCode.app}")"
 ICONSET_DIR="$(repo_path "${JOYCODE_ICONSET_DIR:-$BUILD_ROOT/AppIcon.iconset}")"
 ICON_OUTPUT="$(repo_path "${JOYCODE_ICON_OUTPUT:-Resources/AppIcon.icns}")"
+# Code signing identity: "-" (default) is ad-hoc, whose cdhash-based requirement makes
+# macOS drop the Accessibility grant on every rebuild. A stable local identity, e.g.
+# a self-signed "Code Signing" certificate, keeps the grant across rebuilds.
+SIGN_IDENTITY="${JOYCODE_SIGN_IDENTITY:--}"
 
 prepare_build_environment() {
     if [ "$(uname -s)" != Darwin ]; then

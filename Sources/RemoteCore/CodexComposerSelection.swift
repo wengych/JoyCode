@@ -118,21 +118,23 @@ public enum CodexComposerSelection {
         rejectionReason(for: evidence, isEditable: isEditable) == nil
     }
 
-    /// Follow an actually focused eligible editor first. Without that evidence,
-    /// prefer a unique main-pane editor, then a unique nonsecondary editor.
-    /// Neither score, position nor traversal order breaks a remaining ambiguity.
+    /// Only the main-thread composer is supported. Side chat editors (inside a
+    /// complementary landmark) carry their own dictation button but are never
+    /// selected, even while focused; the caller then moves focus to the main editor.
+    /// Among the rest, follow a focused editor first, then a unique main-pane editor,
+    /// then a unique remaining editor. Neither score, position nor traversal order
+    /// breaks a remaining ambiguity.
     public static func select(_ candidates: [Candidate]) throws -> Candidate? {
-        let eligible = candidates.filter { $0.recognized && $0.isEditable }
+        let eligible = candidates.filter { $0.recognized && $0.isEditable && !$0.isSecondary }
         let focused = eligible.filter(\.isFocused)
         if focused.count > 1 { throw SelectionError.ambiguous }
         if let only = focused.first { return only }
 
-        let main = eligible.filter { $0.isInMainPane && !$0.isSecondary }
+        let main = eligible.filter(\.isInMainPane)
         if main.count > 1 { throw SelectionError.ambiguous }
         if let only = main.first { return only }
 
-        let primary = eligible.filter { !$0.isSecondary }
-        if primary.count > 1 { throw SelectionError.ambiguous }
-        return primary.first
+        if eligible.count > 1 { throw SelectionError.ambiguous }
+        return eligible.first
     }
 }

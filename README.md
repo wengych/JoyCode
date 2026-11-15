@@ -24,7 +24,7 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 需要 macOS 14 或更新版本、Xbox 手柄及支持的桌面客户端。目前主要在 Apple Silicon 上验证。
 
 - Claude Desktop／Claude Code：`com.anthropic.claudefordesktop`。
-- ChatGPT／Codex：当前适配的客户端 Bundle ID 为 `com.openai.codex`，不代表所有 ChatGPT 桌面或网页版均兼容。
+- ChatGPT／Codex：当前适配的客户端 Bundle ID 为 `com.openai.codex`，不代表所有 ChatGPT 桌面或网页版均兼容。仅支持主线会话输入框，侧边对话（side chat）不在支持范围。
 - 使用原生听写时，目标客户端须已有可用的听写入口。
 
 1. 打开 `JoyCode.app`，连接手柄。应用初始处于诊断模式，仅显示最近输入。
@@ -47,7 +47,7 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 - **LB：**激活 Claude 并聚焦输入框。
 - **RB：**激活 Codex 当前窗口，保留其输入焦点。
-- **X：**在当前支持的 Agent 窗口内开始听写，再按一次结束；不会自动拉起其他 Agent。
+- **X：**在当前支持的 Agent 窗口内开始听写，再按一次结束；不会自动拉起其他 Agent。Codex 的侧边对话有焦点时，先把焦点移回主线输入框再开始。
 - **A：**草稿稳定后提交一次，遵循当前 `Send`／`Queue`／`Steer` 模式；不触发 `Stop`／`Resume` 或权限审批。目标变化时先提示检查。
 - **B：**取消 JoyCode 发起且仍在录音的听写。Codex 使用原生取消按钮，Claude 使用定向 Esc。**进入转写阶段后，需在 Agent 内手动取消。**
 - **方向键 ↑／↓：**切换当前应用的会话。Claude Code 使用会话菜单；Codex 使用上一／下一侧栏项目，混合侧栏中也可能选中 Page 或附件。
@@ -55,7 +55,7 @@ JoyCode 使用 Swift、GameController 和 Accessibility，直接读取手柄输�
 
 不绑定主页键、系统菜单键及摇杆左右方向；暂不提供按住说话。
 
-普通动作捕获当前应用、进程和窗口，并在执行时复核。切窗或目标不明会停止操作；只有肩键和明确的激活入口能主动切换窗口。录音／转写期间锁定目标；状态不明时，仅在原窗口只读确认空闲后恢复，不会自动重录或发送。手动复位不负责停止 Agent 的录音。
+普通动作捕获当前应用、进程和窗口，并在执行时复核。切窗或目标不明会停止操作；只有肩键和明确的激活入口能主动切换窗口。录音／转写期间锁定目标；状态不明时，仅在原窗口只读确认空闲后恢复，不会自动重录或发送。原目标无法恢复时，肩键仍会把所属应用切回前台但保留锁定；确认录音已停止后连按两次 B 复位。手动复位不负责停止 Agent 的录音。
 
 同一目标、同一草稿的提交尝试会保留记录，防止结果未知时重复提交；切到其他 Agent 不会清除记录，观察到同一编辑器内容改变或清空后才释放。客户端更新可能改变可访问性结构，遇到未知控件时应用会拒绝操作。
 
@@ -84,13 +84,31 @@ bash package-release.sh
 
 打包脚本会重新构建；默认输出 `dist/JoyCode-0.3.15-build27-macos-arm64.zip` 和 `dist/SHA256SUMS`，架构名按实际二进制确定。构建缓存位于 `.build-work/`。可通过 `JOYCODE_BUILD_ROOT`、`JOYCODE_DIST_DIR` 等环境变量覆盖路径，相对值均按仓库根目录解析；完整选项见 [script-env.sh](script-env.sh)。
 
+默认使用 ad-hoc 签名，每次重新构建后系统都会把它当作新应用，辅助功能授权随之失效。本机开发时，可在“钥匙串访问 → 证书助理 → 创建证书”中建一张自签名的“代码签名”证书，并在其信任设置中将“代码签名”设为“始终信任”，然后用它签名；首次授权后，重新构建不再需要重新授权：
+
+```bash
+JOYCODE_SIGN_IDENTITY="证书名称" bash build.sh
+```
+
 图标源文件为 [Resources/AppIcon-master.png](Resources/AppIcon-master.png)。修改后运行 `bash make-icon.sh` 更新 ICNS；正常构建保留已有图标。
+
+### 诊断日志
+
+设置窗口“最近事件”中的内容、手柄按键（含未启用遥控时的“仅诊断”按键）、启动信息和辅助功能权限变化都会写入 macOS 统一日志，可在终端查看：
+
+```bash
+bash logs.sh          # 最近 30 分钟
+bash logs.sh stream   # 实时跟随，边按键边看
+bash logs.sh errors   # 最近 1 天弹出过提示的失败
+```
+
+带 HUD 的失败为 error 级别，其余为 notice。ad-hoc 重新构建后辅助功能授权可能失效，日志会出现“辅助功能权限：未授权”。
 
 ## 本地数据与代码
 
 为兼容早期配置，Bundle ID／UserDefaults 域保持 `local.weng.XboxAgentRemote`，内部可执行文件名保持 `XboxAgentRemote`。配置保存在本机，草稿备份只保留在内存中。
 
-JoyCode 不采集或上传语音；语音由所选 Agent 或 Typeless 处理。诊断记录动作与窗口身份等元数据，不记录草稿、转写或录音内容。快捷键录制仅在设置窗口获得焦点时工作。
+JoyCode 不采集或上传语音；语音由所选 Agent 或 Typeless 处理。诊断记录动作与窗口身份等元数据，不记录草稿、转写或录音内容；同一份事件和手柄输入也写入本机 macOS 统一日志（subsystem `local.weng.XboxAgentRemote`，可能包含自行登记的会话名称），不上传。快捷键录制仅在设置窗口获得焦点时工作。
 
 - [Sources/XboxAgentRemote](Sources/XboxAgentRemote)：应用界面、手柄输入、协调器与 Accessibility 适配。
 - [Sources/RemoteCore](Sources/RemoteCore)：状态、目标约束、控件语义与滚动计算。

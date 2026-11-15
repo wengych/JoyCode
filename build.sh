@@ -23,7 +23,7 @@ mkdir -p "$STAGING_APP/Contents/MacOS" "$STAGING_APP/Contents/Resources"
 cp "$BUILD_DIR/release/$EXECUTABLE" "$STAGING_APP/Contents/MacOS/$EXECUTABLE"
 cp "$SOURCE_DIR/Resources/Info.plist" "$STAGING_APP/Contents/Info.plist"
 cp "$ICON_OUTPUT" "$STAGING_APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign - --timestamp=none --identifier "$BUNDLE_ID" "$STAGING_APP"
+codesign --force --sign "$SIGN_IDENTITY" --timestamp=none --identifier "$BUNDLE_ID" "$STAGING_APP"
 codesign --verify --deep --strict "$STAGING_APP"
 # Replace only the selected generated bundle after a successful build/signature.
 # The default is this repository's dist/, not the previously installed workspace app.

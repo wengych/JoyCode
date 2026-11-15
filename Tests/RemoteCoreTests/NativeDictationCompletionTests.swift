@@ -25,6 +25,45 @@ final class NativeDictationCompletionTests: XCTestCase {
         XCTAssertNotNil(state.readyDraft, "Completion does not consume or submit the draft")
     }
 
+    func testUnfocusedCompletionUnlocksWithoutSendReadiness() throws {
+        var state = RemoteState()
+        try state.acceptManualDraft(snapshot("seed"))
+        try state.begin(with: snapshot("seed"))
+        try state.stop()
+        let landed = snapshot("seed and transcript", focused: false)
+        XCTAssertThrowsError(try state.completeConfirmedDictation(with: landed))
+        XCTAssertEqual(state.voicePhase, .transcribing, "A rejected focused completion changes nothing")
+
+        try state.completeUnfocusedNativeDictation(with: landed)
+        XCTAssertEqual(state.voicePhase, .idle)
+        XCTAssertNil(state.lockedTarget)
+        XCTAssertNil(state.readyDraft, "Text that landed without focus must be reviewed before A")
+        XCTAssertFalse(state.canSend)
+        try state.begin(with: snapshot("seed and transcript"))
+        XCTAssertEqual(state.voicePhase, .recording, "The next recording is not blocked")
+    }
+
+    func testUnfocusedCompletionRequiresTranscribingStableOriginalTarget() throws {
+        var recording = RemoteState()
+        try recording.begin(with: snapshot("seed"))
+        XCTAssertThrowsError(try recording.completeUnfocusedNativeDictation(with: snapshot("x", focused: false))) {
+            XCTAssertEqual($0 as? RemoteCoreError, .invalidVoiceTransition)
+        }
+
+        var state = RemoteState()
+        try state.begin(with: snapshot("seed"))
+        try state.stop()
+        XCTAssertThrowsError(try state.completeUnfocusedNativeDictation(with: snapshot("x", focused: false, stable: false))) {
+            XCTAssertEqual($0 as? RemoteCoreError, .focusNotConfirmed)
+        }
+        var otherTarget = target
+        otherTarget.composerID = "other-composer"
+        XCTAssertThrowsError(try state.completeUnfocusedNativeDictation(with: snapshot("x", target: otherTarget, focused: false))) {
+            XCTAssertEqual($0 as? RemoteCoreError, .targetMismatch)
+        }
+        XCTAssertEqual(state.voicePhase, .transcribing)
+    }
+
     func testConfirmedEmptyOrUnchangedRecordingUnlocksWithoutReadyingUnverifiedText() throws {
         for (baseline, result) in [("", ""), ("seed", "seed"), ("seed", " \n"), ("seed", "seed\n  ")] {
             var state = RemoteState()

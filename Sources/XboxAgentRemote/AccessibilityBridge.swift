@@ -46,6 +46,13 @@ enum NativeDictationObservation: String {
     case idle, recording, processing, unavailable
 }
 
+/// Completed native dictation text from the verified original editor, plus whether
+/// that editor still holds keyboard focus. Focus alone decides send readiness.
+struct NativeCompletionDraft: Equatable {
+    let text: String
+    let isFocused: Bool
+}
+
 enum AccessibilityBridgeError: LocalizedError {
     case permissionRequired
     case unavailable(String)
@@ -321,7 +328,7 @@ final class AccessibilityBridge {
         return running
     }
 
-    func focusComposer(bundleID: String, expectedWindow: ForegroundWindowHandle? = nil) throws -> ComposerHandle {
+    func focusComposer(bundleID: String, expectedWindow: ForegroundWindowHandle? = nil) async throws -> ComposerHandle {
         let expected = try expectedWindow ?? captureForegroundWindow(bundleID: bundleID)
         guard expected.bundleID == bundleID else {
             throw AccessibilityBridgeError.targetChanged("输入框所属应用与本次前台目标不符")
@@ -342,6 +349,14 @@ final class AccessibilityBridge {
             try verifyForegroundWindow(expected)
             try performInForeground(window: expected) {
                 try check(AXUIElementSetAttributeValue(handle.element, kAXFocusedAttribute as CFString, kCFBooleanTrue), "聚焦输入框")
+            }
+            // Chromium applies an AX focus write asynchronously (browser → renderer → AX
+            // focus event); an immediate read can still report the previous editor, e.g.
+            // a Codex side chat. Wait up to 1 s for it to land; verify() stays strict.
+            for _ in 0..<20 {
+                if same(element(app, kAXFocusedUIElementAttribute), handle.element) { break }
+                try await Task.sleep(for: .milliseconds(50))
+                try verifyForegroundWindow(expected)
             }
         }
         try verifyForegroundWindow(expected)
@@ -797,11 +812,29 @@ final class AccessibilityBridge {
                         // A failed new request must not inherit a previous request's success.
                         accessibilityPreparation.removeValue(forKey: handle.pid)
                         accessibilityPreparationRequestedAt[handle.pid] = now
-                        let result = try performInForeground(handle) {
+                        var result = try performInForeground(handle) {
                             AXUIElementSetAttributeValue(application(handle.pid),
                                 "AXManualAccessibility" as CFString, kCFBooleanTrue)
                         }
-                        refreshAX = String(result.rawValue)
+                        refreshAX = "manual:\(result.rawValue)"
+                        if result == .attributeUnsupported || result == .notImplemented {
+                            // Codex 26.1111 replaced Electron with a Chromium 157 embedder
+                            // (BrowserCrApplication) that has no Manual setter (AX -25205).
+                            // Chromium enables complete + screen-reader mode for non-VoiceOver AT
+                            // via AXEnhancedUserInterface after the same two-second debounce.
+                            // Only reached when Manual is unsupported; never written false.
+                            // https://github.com/chromium/chromium/blob/157.0.8103.78/chrome/browser/chrome_browser_application_mac.mm
+                            result = try performInForeground(handle) {
+                                AXUIElementSetAttributeValue(application(handle.pid),
+                                    "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+                            }
+                            refreshAX += ",enhanced:\(result.rawValue)"
+                            // BrowserCrApplication schedules the mode change and then calls
+                            // NSApplication's super, which answers kAXErrorNotImplemented.
+                            // Verified on device: AXPress appears afterwards, so the request
+                            // was delivered; the readiness loop still waits for AXPress.
+                            if result == .notImplemented { result = .success }
+                        }
                         try check(result, "刷新原生录音可访问性")
                         accessibilityPreparation[handle.pid] = result
                         readyNotBefore = now + 2
@@ -971,7 +1004,10 @@ final class AccessibilityBridge {
 
     /// Idle + an editable original Prompt is the completion evidence. No transcript value
     /// is read during recording/processing, and a read never releases ownership by itself.
-    func nativeTranscriptionDraft(in handle: ComposerHandle) throws -> String? {
+    /// Focus is reported, not required: a client may move focus after completion
+    /// (Codex returns it to another composer). The coordinator then unlocks without
+    /// send readiness instead of treating finished dictation as an uncertain state.
+    func nativeTranscriptionDraft(in handle: ComposerHandle) throws -> NativeCompletionDraft? {
         guard let owned = ownedNativeVoice, owned.stopRequested, !owned.cancelRequested,
               isSameComposer(owned.handle, handle) else {
             throw AccessibilityBridgeError.targetChanged("原生转写所有权已丢失或尚未请求停止")
@@ -983,7 +1019,7 @@ final class AccessibilityBridge {
             throw AccessibilityBridgeError.unavailable("原生语音控件状态未知，无法确认转写完成。")
         case .idle:
             guard snapshot.editable else { return nil }
-            return try readNativeCompletionDraft(in: handle, snapshot: snapshot, requireFocused: true)
+            return try readNativeCompletionDraft(in: handle, snapshot: snapshot)
         }
     }
 
@@ -1011,7 +1047,7 @@ final class AccessibilityBridge {
             }
         }
         guard let snapshot = try confirmedIdleSnapshot() else { return nil }
-        let text = try readNativeCompletionDraft(in: handle, snapshot: snapshot, requireFocused: false)
+        let text = try readNativeCompletionDraft(in: handle, snapshot: snapshot).text
         guard try confirmedIdleSnapshot() != nil else { return nil }
         return text
     }
@@ -1076,16 +1112,17 @@ final class AccessibilityBridge {
         }
         let snapshot = try nativeControlSnapshot(in: handle)
         guard snapshot.observation == .idle, snapshot.editable else { return false }
-        return try readNativeCompletionDraft(in: handle, snapshot: snapshot, requireFocused: false) == baseline
+        return try readNativeCompletionDraft(in: handle, snapshot: snapshot).text == baseline
     }
 
     /// Only reads the completed editor in the original pinned scope. The original
     /// operation handle remains unchanged; future actions must discover a fresh one.
-    private func readNativeCompletionDraft(in handle: ComposerHandle, snapshot: NativeControlSnapshot,
-                                            requireFocused: Bool) throws -> String {
+    private func readNativeCompletionDraft(in handle: ComposerHandle,
+                                            snapshot: NativeControlSnapshot) throws -> NativeCompletionDraft {
         guard handle.bundleID == codexBundleID else {
-            try verifyNativeTarget(handle, requireFocused: requireFocused)
-            return try readDraftValue(handle)
+            try verifyNativeTarget(handle, requireFocused: false)
+            let focused = same(element(application(handle.pid), kAXFocusedUIElementAttribute), handle.element)
+            return NativeCompletionDraft(text: try readDraftValue(handle), isFocused: focused)
         }
         try verifyNativeTarget(handle)
         guard let owned = ownedNativeVoice, let scope = owned.scope,
@@ -1103,12 +1140,10 @@ final class AccessibilityBridge {
         }
         try rejectModalAncestors(of: editor, window: handle.window)
         try requireNativeVisibility(editor, in: handle.window, component: "听写恢复输入框", hitTest: false)
-        if requireFocused, !same(element(application(handle.pid), kAXFocusedUIElementAttribute), editor) {
-            throw AccessibilityBridgeError.targetChanged("输入焦点不在听写恢复后的输入框")
-        }
+        let focused = same(element(application(handle.pid), kAXFocusedUIElementAttribute), editor)
         let text = try readDraftValue(from: editor)
         try verifyNativeTarget(handle)
-        return text
+        return NativeCompletionDraft(text: text, isFocused: focused)
     }
 
     func forgetNativeDictationOwnership() { ownedNativeVoice = nil }

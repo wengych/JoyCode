@@ -1,6 +1,15 @@
 import AppKit
 import Combine
+import os
 import RemoteCore
+
+/// Unified-log channels for local diagnosis (`bash logs.sh`). Only metadata that the
+/// in-app event list already shows is logged; drafts and transcripts never are.
+extension Logger {
+    static let joySubsystem = "local.weng.XboxAgentRemote"
+    static let joyEvents = Logger(subsystem: joySubsystem, category: "events")
+    static let joyController = Logger(subsystem: joySubsystem, category: "controller")
+}
 
 extension AgentID {
     var name: String { self == .chatGPT ? "ChatGPT / Codex" : "Claude" }
@@ -134,6 +143,13 @@ final class Coordinator: ObservableObject {
             catch { status = "会话配置无法读取，请重新登记；原数据未覆盖" }
         }
         hasAccessibility = bridge.isTrusted
+        let info = Bundle.main.infoDictionary
+        Logger.joyEvents.notice("""
+            启动 version=\(info?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public) \
+            build=\(info?["CFBundleVersion"] as? String ?? "?", privacy: .public) \
+            pid=\(ProcessInfo.processInfo.processIdentifier) accessibility=\(self.hasAccessibility) \
+            voiceBackend=\(self.configuration.defaultVoiceBackend.rawValue, privacy: .public)
+            """)
         controller.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.objectWillChange.send() }
         }.store(in: &subscriptions)
@@ -153,7 +169,10 @@ final class Coordinator: ObservableObject {
     }
 
     func refreshPermissions() {
-        hasAccessibility = bridge.isTrusted
+        let trusted = bridge.isTrusted
+        // Polled every second; record transitions only. Rebuilt ad-hoc bundles lose the grant.
+        if trusted != hasAccessibility { recordEvent("辅助功能权限：\(trusted ? "已授权" : "未授权")") }
+        hasAccessibility = trusted
         if !hasAccessibility && isEnabled { disable(reason: "辅助功能权限已失效，遥控已停用") }
     }
 
@@ -498,7 +517,17 @@ final class Coordinator: ObservableObject {
         } catch is CancellationError { }
         catch {
             guard generation == operationGeneration else { return false }
-            report(error.localizedDescription, showHUD: true)
+            // The locked window or conversation may no longer verify (e.g. it was
+            // replaced). Still honor the explicit shoulder press by bringing the owning
+            // app forward, so the controller is never stranded in another app. The lock
+            // stays and every later action re-verifies; B twice is the manual reset.
+            if let running = NSRunningApplication(processIdentifier: handle.pid),
+               !running.isTerminated, running.bundleIdentifier == handle.bundleID {
+                _ = running.activate(options: [])
+                report("\(error.localizedDescription)；已切回 \(agentName(in: handle))，锁定保留。确认录音已停止后，连按两次 B 复位", showHUD: true)
+            } else {
+                report(error.localizedDescription, showHUD: true)
+            }
         }
         return false
     }
@@ -607,7 +636,7 @@ final class Coordinator: ObservableObject {
                     return
                 }
                 let next: ComposerHandle
-                do { next = try bridge.focusComposer(bundleID: target.bundleID, expectedWindow: expectedWindow) }
+                do { next = try await bridge.focusComposer(bundleID: target.bundleID, expectedWindow: expectedWindow) }
                 catch {
                     guard isComposerNotReady(error) else { throw error }
                     continue
@@ -634,7 +663,7 @@ final class Coordinator: ObservableObject {
             if let captured { try bridge.verifyForegroundWindow(captured) }
             do {
                 if captured == nil { captured = try bridge.captureForegroundWindow(bundleID: bundleID) }
-                return try bridge.focusComposer(bundleID: bundleID, expectedWindow: captured)
+                return try await bridge.focusComposer(bundleID: bundleID, expectedWindow: captured)
             }
             catch {
                 guard isComposerNotReady(error) else { throw error }
@@ -897,20 +926,35 @@ final class Coordinator: ObservableObject {
                     try checkOperation(generation, requireEnabled: true)
                     guard state.voicePhase == .transcribing, ownedVoiceBackend == backend,
                           let current = self.handle, bridge.isSameComposer(current, handle) else { return }
-                    let observedText = backend == .nativeDictation
-                        ? try bridge.nativeTranscriptionDraft(in: handle)
-                        : try bridge.transcriptionDraft(in: handle)
-                    guard let text = observedText else {
+                    let observed: (text: String, focused: Bool)?
+                    if backend == .nativeDictation {
+                        observed = try bridge.nativeTranscriptionDraft(in: handle).map { ($0.text, $0.isFocused) }
+                    } else {
+                        observed = try bridge.transcriptionDraft(in: handle).map { ($0, true) }
+                    }
+                    guard let observed else {
                         lastText = nil
                         stableSamples = 0
                         continue
                     }
+                    let text = observed.text
                     if text == lastText { stableSamples += 1 } else { lastText = text; stableSamples = 0 }
-                    let snapshot = makeSnapshot(handle, text: text, stable: stableSamples >= 4)
-                    if backend == .nativeDictation, stableSamples >= 4 {
-                        try state.completeConfirmedDictation(with: snapshot)
+                    let stable = stableSamples >= 4
+                    var landedUnfocused = false
+                    if backend == .nativeDictation {
+                        // The bridge already proved the native control idle. An unfocused
+                        // sample must never reach observe(), which locks as uncertain.
+                        let snapshot = makeSnapshot(handle, text: text, stable: stable, focused: observed.focused)
+                        if stable && observed.focused {
+                            try state.completeConfirmedDictation(with: snapshot)
+                        } else if stable {
+                            try state.completeUnfocusedNativeDictation(with: snapshot)
+                            landedUnfocused = true
+                        } else if observed.focused {
+                            state.observe(snapshot)
+                        }
                     } else {
-                        state.observe(snapshot)
+                        state.observe(makeSnapshot(handle, text: text, stable: stable))
                     }
                     if state.voicePhase == .idle {
                         let unchanged = text == voiceBaseline
@@ -920,7 +964,12 @@ final class Coordinator: ObservableObject {
                             try useVisibleSession()
                         }
                         clearVoiceTracking()
-                        report(unchanged ? "听写已结束，没有新增文字" : "文字已出现并稳定；检查后按 A 发送")
+                        if landedUnfocused {
+                            report(unchanged ? "听写已结束，没有新增文字；输入焦点已离开输入框"
+                                : "文字已出现，但输入焦点已离开输入框；检查草稿后再按 A 发送", showHUD: !unchanged)
+                        } else {
+                            report(unchanged ? "听写已结束，没有新增文字" : "文字已出现并稳定；检查后按 A 发送")
+                        }
                         return
                     }
                 } catch is CancellationError { return }
@@ -1017,7 +1066,7 @@ final class Coordinator: ObservableObject {
             let agent = try ForegroundActionPolicy.resolve(action: .send,
                 foregroundBundleID: expectedWindow.bundleID, voicePhase: state.voicePhase,
                 ownedBundleID: handle?.bundleID)
-            let current = try bridge.focusComposer(bundleID: expectedWindow.bundleID, expectedWindow: expectedWindow)
+            let current = try await bridge.focusComposer(bundleID: expectedWindow.bundleID, expectedWindow: expectedWindow)
             if current.bundleID == AgentID.chatGPT.bundleID {
                 recordEvent("输入框定位：\(bridge.lastComposerDiagnostic)")
             }
@@ -1382,13 +1431,17 @@ final class Coordinator: ObservableObject {
 
     private func report(_ text: String, showHUD: Bool = false) {
         status = text
-        recordEvent(text)
+        // HUD reports are the user-visible failures; keep them findable at error level.
+        recordEvent(text, level: showHUD ? .error : .default)
         if showHUD { hud.show(title: "遥控提示", message: text) }
         else { hud.hide() }
     }
 
-    private func recordEvent(_ text: String) {
+    private func recordEvent(_ text: String, level: OSLogType = .default) {
         let event = "[\(eventTimeFormatter.string(from: Date()))] \(text)"
+        // Events carry action, window identity and failure reasons only, never drafts or
+        // transcripts, so they are logged as public for local `log show` diagnosis.
+        Logger.joyEvents.log(level: level, "\(text, privacy: .public)")
         recentEvents.insert(event, at: 0)
         // Preserve full messages, including quiet successes, in a bounded diagnostic history.
         recentEvents = Array(recentEvents.prefix(200))

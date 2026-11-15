@@ -320,6 +320,17 @@ public struct RemoteState {
         previousReadyDraft = nil
     }
 
+    /// Native completion proven idle and stable in the original editor, but keyboard
+    /// focus has left it (the client moved focus elsewhere). Dictation is over, so
+    /// unlock instead of locking as uncertain, but never make the text ready to send.
+    public mutating func completeUnfocusedNativeDictation(with snapshot: ComposerSnapshot) throws {
+        guard voicePhase == .transcribing else { throw RemoteCoreError.invalidVoiceTransition }
+        guard snapshot.isStable else { throw RemoteCoreError.focusNotConfirmed }
+        guard snapshot.target == lockedTarget else { throw RemoteCoreError.targetMismatch }
+
+        confirmVoiceStopped()
+    }
+
     /// The caller must independently prove that the owned native dictation is idle.
     /// A stable observation of the original target can clear uncertainty without
     /// keyboard focus, but never makes its text ready to send.

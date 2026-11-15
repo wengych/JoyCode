@@ -120,15 +120,22 @@ final class CodexComposerSelectionTests: XCTestCase {
         XCTAssertNil(try Selection.select([readOnly, unknown]))
     }
 
-    func testUniqueFocusedEligibleComposerFollowsActivePane() throws {
+    func testFocusedSideChatNeverWinsOverMainThreadComposer() throws {
+        // Codex 26.1111: side chat sits in a complementary landmark nested in main.
         let main = candidate(1, main: true)
-        let activeSecondary = candidate(2, focused: true, secondary: true)
-        XCTAssertEqual(try Selection.select([main, activeSecondary]), activeSecondary)
-        XCTAssertEqual(try Selection.select([activeSecondary, main]), activeSecondary)
+        let activeSideChat = candidate(2, focused: true, main: true, secondary: true)
+        XCTAssertEqual(try Selection.select([main, activeSideChat]), main)
+        XCTAssertEqual(try Selection.select([activeSideChat, main]), main)
+        XCTAssertNil(try Selection.select([activeSideChat]), "Side chat alone is unsupported")
+    }
+
+    func testUniqueFocusedMainThreadComposerFollowsFocus() throws {
+        let focused = candidate(1, focused: true)
+        XCTAssertEqual(try Selection.select([candidate(2, main: true), focused]), focused)
     }
 
     func testMultipleFocusedEligibleComposersRemainAmbiguous() {
-        assertAmbiguous([candidate(1, focused: true, main: true), candidate(2, focused: true, secondary: true)])
+        assertAmbiguous([candidate(1, focused: true, main: true), candidate(2, focused: true)])
     }
 
     func testUniqueMainPaneWinsWithoutFocus() throws {
